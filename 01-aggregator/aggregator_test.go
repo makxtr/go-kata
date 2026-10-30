@@ -92,3 +92,42 @@ func TestAggregate_SlowPoke(t *testing.T) {
 
 	t.Logf("slow poke took %s", elapsed)
 }
+
+func TestAggregate_ParentCancel(t *testing.T) {
+	profile := func(ctx context.Context, id int) (string, error) {
+		select {
+		case <-time.After(1 * time.Second):
+			return "Name: Alice", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+
+	order := func(ctx context.Context, id int) (string, error) {
+		select {
+		case <-time.After(1 * time.Second):
+			return "Orders: 5", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+
+	agg := New(profile, order, WithTimeout(5*time.Second))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := agg.Aggregate(ctx, 5)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded, got %v", err)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("took %s, want under 500ms", elapsed)
+	}
+	t.Logf("parent cancel took %s", elapsed)
+}
