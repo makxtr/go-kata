@@ -11,13 +11,22 @@ type Job struct {
 }
 
 func (s *Server) worker(id int) {
-	defer s.wg.Done()
+	defer func() {
+		s.logger.Debug("worker stopped", "id", id)
+		s.wg.Done()
+	}()
+
+	s.logger.Debug("worker started", "id", id)
 
 	for {
 		select {
 		case job := <-s.jobs:
 			time.Sleep(10 * time.Millisecond)
-			job.Result <- fmt.Sprintf("job %d done by worker %d", job.ID, id)
+			select {
+			case job.Result <- fmt.Sprintf("job %d done by worker %d", job.ID, id):
+			case <-s.quit:
+				return
+			}
 
 		case <-s.quit:
 			return
