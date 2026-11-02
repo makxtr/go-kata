@@ -2,6 +2,7 @@ package server
 
 import (
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -11,6 +12,9 @@ type Server struct {
 	workers        int
 	warmInterval   time.Duration
 	logger         *slog.Logger
+	jobs           chan Job
+	quit           chan struct{}
+	wg             sync.WaitGroup
 }
 
 type Option func(*Server)
