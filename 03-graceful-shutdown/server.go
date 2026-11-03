@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,6 +16,7 @@ type Server struct {
 	jobs           chan Job
 	quit           chan struct{}
 	wg             sync.WaitGroup
+	nextID         atomic.Int64
 }
 
 type Option func(*Server)
