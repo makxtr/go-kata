@@ -26,6 +26,7 @@ type Server struct {
 	nextID   atomic.Int64
 	warmQuit chan struct{}
 	warmDone chan struct{}
+	serveErr chan error
 
 	// resources
 	db      *DBPool
@@ -96,6 +97,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.quit = make(chan struct{})
 	s.warmQuit = make(chan struct{})
 	s.warmDone = make(chan struct{})
+	s.serveErr = make(chan error, 1)
 
 	s.db = NewDBPool(s.workers, s.logger)
 
@@ -104,6 +106,16 @@ func (s *Server) Start(ctx context.Context) error {
 	s.httpSrv = &http.Server{Handler: mux, ReadHeaderTimeout: s.requestTimeout}
 
 	s.logger.Info("starting server", "addr", ln.Addr().String())
+
+	for i := range s.workers {
+		s.wg.Add(1)
+		go s.worker(i)
+	}
+	go s.warmer()
+
+	go func() {
+		s.serveErr <- s.httpSrv.Serve(ln)
+	}()
 
 	return nil
 }
