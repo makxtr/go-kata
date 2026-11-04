@@ -8,15 +8,20 @@ import (
 )
 
 type Server struct {
+	// settings
 	addr           string
 	requestTimeout time.Duration
-	workers        int
 	warmInterval   time.Duration
+	workers        int
 	logger         *slog.Logger
+
+	// lifecycle
 	jobs           chan Job
 	quit           chan struct{}
 	wg             sync.WaitGroup
 	nextID         atomic.Int64
+	warmQuit       chan struct{}
+	warmDone       chan struct{}
 }
 
 type Option func(*Server)
