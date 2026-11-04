@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -118,6 +119,42 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+func (s *Server) Stop(ctx context.Context) error {
+	s.logger.Info("shutting down server")
+
+	var errs []error
+
+	err := s.httpSrv.Shutdown(ctx)
+	if err != nil {
+		errs = append(errs, err)
+		s.logger.Warn("shutdown timeout", "error", err)
+		err = s.httpSrv.Close()
+		errs = append(errs, err)
+	}
+
+	err = <-s.serveErr
+	if !errors.Is(err, http.ErrServerClosed) {
+		errs = append(errs, err)
+	}
+
+	close(s.quit)
+	s.wg.Wait()
+
+	close(s.warmQuit)
+	<-s.warmDone
+
+	err = s.db.Close()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	s.cancel()
+
+	s.logger.Info("server stopped")
+
+	return errors.Join(errs...)
 }
 
 func (s *Server) Addr() string {
