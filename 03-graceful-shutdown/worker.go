@@ -6,8 +6,13 @@ import (
 )
 
 type Job struct {
-	ID     int
-	Result chan string
+	ID       int
+	Result   chan string
+	Duration time.Duration
+}
+
+func newJob(id int, d time.Duration) Job {
+	return Job{ID: id, Duration: d, Result: make(chan string, 1)}
 }
 
 func (s *Server) worker(id int) {
@@ -21,12 +26,14 @@ func (s *Server) worker(id int) {
 	for {
 		select {
 		case job := <-s.jobs:
-			time.Sleep(10 * time.Millisecond)
+
 			select {
-			case job.Result <- fmt.Sprintf("job %d done by worker %d", job.ID, id):
+			case <-time.After(job.Duration):
 			case <-s.quit:
 				return
 			}
+
+			job.Result <- fmt.Sprintf("job %d done by worker %d", job.ID, id)
 
 		case <-s.quit:
 			return
