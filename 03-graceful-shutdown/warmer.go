@@ -13,6 +13,7 @@ func (s *Server) warmer() {
 		case <-ticker.C:
 			s.logger.Info("cache warmed")
 		case <-s.warmQuit:
+			s.logger.Info("close warmer")
 			return
 		}
 	}
