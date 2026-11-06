@@ -1,12 +1,15 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -72,6 +75,58 @@ func TestServer_HappyPath(t *testing.T) {
 	if err := srv.Stop(ctx); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
+
+	waitGoroutines(t, before)
+}
+
+func TestServer_SuddenDeath(t *testing.T) {
+	var buf bytes.Buffer
+	before := runtime.NumGoroutine()
+
+	srv := newTestServer(t, WithLogger(slog.New(slog.NewTextHandler(&buf, nil))))
+
+	var wg sync.WaitGroup
+	var ok, failed atomic.Int64
+
+	for range 100 {
+		wg.Go(func() {
+			resp, err := http.Get("http://" + srv.Addr() + "/job")
+			if err != nil {
+				failed.Add(1)
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				failed.Add(1)
+				return
+			}
+
+			_, err = io.ReadAll(resp.Body)
+			if err != nil {
+				t.Errorf("read body: %v", err)
+				return
+			}
+			ok.Add(1)
+		})
+	}
+	time.Sleep(5 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := srv.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	wg.Wait()
+	http.DefaultTransport.(*http.Transport).CloseIdleConnections()
+
+	if ok.Load() == 0 {
+		t.Fatalf("ok = %d, failed = %d; want ok > 0", ok.Load(), failed.Load())
+	}
+	if !strings.Contains(buf.String(), "shutting down") {
+		t.Fatalf("buf = %q; want to contain %q", buf.String(), "shutting down")
+	}
+
+	t.Logf("ok = %d, failed = %d", ok.Load(), failed.Load())
 
 	waitGoroutines(t, before)
 }
