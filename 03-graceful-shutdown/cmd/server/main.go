@@ -15,23 +15,22 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	srv := server.New(server.WithLogger(log), server.WithWarmInterval(2*time.Second))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	srv := server.New(server.WithLogger(logger), server.WithWarmInterval(2*time.Second))
 
-	err := srv.Start(ctx)
-	if err != nil {
-		log.Error(err.Error())
+	if err := srv.Start(ctx); err != nil {
+		logger.Error("start failed", "err", err)
 		os.Exit(1)
 	}
 
 	<-ctx.Done()
+	stop()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	err = srv.Stop(ctx)
-	if err != nil {
-		log.Error(err.Error())
+	if err := srv.Stop(shutdownCtx); err != nil {
+		logger.Error("stop failed", "err", err)
 		os.Exit(1)
 	}
 }

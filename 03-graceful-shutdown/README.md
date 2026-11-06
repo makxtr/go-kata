@@ -75,5 +75,34 @@ Implement a `Server` struct with `Start() error` and `Stop(ctx context.Context) 
 - `":0"` as the port lets the OS pick a free one; use `net.Listen` + `Serve(listener)`
   instead of `ListenAndServe` so the chosen address can be read back.
 - Every time constant in a service must be an option, otherwise tests cannot shrink it.
+- `Start` is non-blocking: it listens first (so nothing leaks on error), then spawns
+  workers, warmer and `Serve` in goroutines and returns. `Stop` does the waiting.
+- Stop is a chain of "signal, then wait" pairs in reverse start order:
+  `Shutdown` + `<-serveErr`, `close(quit)` + `wg.Wait()`, `close(warmQuit)` + `<-warmDone`,
+  then `db.Close()`. Closing a `chan struct{}` is a broadcast: every goroutine selecting on it
+  wakes up at once.
+- `WaitGroup` for N identical goroutines, a `done` channel for a single one, `chan error`
+  with buffer 1 for a goroutine that returns a result (`Serve`).
+- `http.Server.Shutdown` closes the listener and idle connections, then waits for active
+  handlers. It does NOT cancel `r.Context()`, so in-flight requests finish. The ctx passed to
+  `Shutdown` is only an upper bound. On `DeadlineExceeded` fall back to `Close()`, which drops
+  connections and does cancel `r.Context()`.
+- A worker must never block uncancellably: `select` on `time.After` and `quit` instead of
+  `time.Sleep`, and `Job.Result` has buffer 1 so a worker whose handler already timed out
+  can drop the result and move on (without the buffer the pool silently shrinks and `Stop`
+  deadlocks on `wg.Wait`).
+- Signals belong in `main`: `signal.NotifyContext` turns SIGINT/SIGTERM into ctx cancellation.
+  The shutdown ctx must derive from `context.Background()`, the signal ctx is already cancelled.
+  Call `stop()` after the first signal so a second Ctrl+C kills the process the default way.
+- `os.Exit` skips deferred calls; keep it out of library code so shutdown stays testable.
+- Goroutine-leak test: `runtime.NumGoroutine()` before and after, but goroutines exit
+  asynchronously, so poll with a deadline instead of comparing once. The HTTP client keeps
+  keep-alive connections with two goroutines each: call
+  `http.DefaultTransport.(*http.Transport).CloseIdleConnections()` before counting.
+- `t.Fatal` only from the test goroutine; from spawned goroutines use `t.Error`.
+- `wg.Go` (Go 1.25) replaces the `Add`/`go`/`defer Done` triple.
+- Sudden Death clients fail in three ways: `connection refused` (listener closed),
+  `connection reset` (accepted by the kernel, never by `Accept`), `EOF` (idle conn closed).
+  One client may take a full second: a lost SYN is retransmitted after the TCP timeout.
 
 Run: `go vet ./... && go test -race -v ./...`

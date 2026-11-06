@@ -171,3 +171,41 @@ func TestServer_SuddenDeath(t *testing.T) {
 
 	waitGoroutines(t, before)
 }
+
+func TestServer_SlowLeak(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	srv := newTestServer(t, WithRequestTimeout(20*time.Millisecond))
+
+	for i := range 50 {
+		url := "http://" + srv.Addr() + "/job"
+		want := http.StatusOK
+		if i%10 == 0 {
+			url += "?sleep=50ms"
+			want = http.StatusGatewayTimeout
+		}
+
+		resp, err := http.Get(url)
+		if err != nil {
+			t.Fatalf("request %d: %v", i, err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Fatalf("request %d status = %d; want %d", i, resp.StatusCode, want)
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := srv.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	http.DefaultTransport.(*http.Transport).CloseIdleConnections()
+
+	waitGoroutines(t, before)
+}
