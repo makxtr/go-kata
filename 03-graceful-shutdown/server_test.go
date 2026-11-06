@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -75,6 +76,46 @@ func TestServer_HappyPath(t *testing.T) {
 	if err := srv.Stop(ctx); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
+
+	waitGoroutines(t, before)
+}
+
+func TestServer_Timeout(t *testing.T) {
+	var buf bytes.Buffer
+	before := runtime.NumGoroutine()
+
+	srv := newTestServer(t, WithLogger(slog.New(slog.NewTextHandler(&buf, nil))))
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		resp, err := http.Get("http://" + srv.Addr() + "/job?sleep=2s")
+		if err != nil {
+			return
+		}
+		resp.Body.Close()
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := srv.Stop(ctx)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop error = %v; want %v", err, context.DeadlineExceeded)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("Stop took %v; want under 1s", elapsed)
+	}
+	if !strings.Contains(buf.String(), "shutdown timeout") {
+		t.Fatalf("buf = %q; want to contain %q", buf.String(), "shutdown timeout")
+	}
+
+	wg.Wait()
+	http.DefaultTransport.(*http.Transport).CloseIdleConnections()
 
 	waitGoroutines(t, before)
 }
